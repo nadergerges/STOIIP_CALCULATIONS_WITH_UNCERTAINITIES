@@ -6,6 +6,11 @@ import altair as alt
 # Streamlit app title
 st.title("STOIIP Calculator (Acres) with Monte Carlo Simulation (Altair)")
 
+# Display the STOIIP equation below the main header
+st.latex(r"""
+\text{STOIIP (STB)} = 7758 \times A(\text{acres}) \times h(\text{ft}) \times \phi \times S_o \times \frac{\text{NTG}}{B_o}
+""")
+
 # Sidebar for input parameters
 st.sidebar.header("Input Parameters")
 
@@ -22,9 +27,6 @@ fvf_unc = st.sidebar.slider("FVF Uncertainty (±%)", 0.0, 50.0, 5.0, step=1.0)
 ntg = st.sidebar.slider("Net-to-Gross (fraction)", 0.1, 1.0, 0.8, step=0.01)
 ntg_unc = st.sidebar.slider("NTG Uncertainty (±%)", 0.0, 50.0, 10.0, step=1.0)
 iterations = st.sidebar.number_input("Iterations", min_value=100, max_value=5000, value=1000, step=100)
-
-# STOIIP factor in acres and feet:
-# STOIIP (STB) = 7758 * area(acres) * thickness(ft) * porosity * So * net-to-gross / Bo
 
 def run_monte_carlo(area_acres, area_unc, thickness, thick_unc, porosity, por_unc,
                     oil_saturation, sat_unc, fvf, fvf_unc, ntg, ntg_unc, iterations):
@@ -44,7 +46,7 @@ def run_monte_carlo(area_acres, area_unc, thickness, thick_unc, porosity, por_un
     fvf_samples = np.clip(fvf_samples, 1.0, 2.0)
     ntg_samples = np.clip(ntg_samples, 0.1, 1.0)
     
-    # Calculate STOIIP in STB
+    # STOIIP calculation (in STB)
     stoiip_samples = (
         7758.0
         * area_samples
@@ -58,11 +60,7 @@ def run_monte_carlo(area_acres, area_unc, thickness, thick_unc, porosity, por_un
     # Convert to billions of STB (BSTB)
     stoiip_bstb = stoiip_samples / 1_000_000_000
     
-    # Calculate "weights" for variable importance (std dev of partial changes)
-    # We'll hold everything else at its mean except the variable in question:
-    # For example, for Area: 7758 * area_samples * mean(thick) * mean(por) * mean(So) * mean(ntg) / mean(fvf)
-    # Then compute std of that expression. Similarly for each parameter.
-    # FVF is special because it appears in the denominator.
+    # Variable weights (based on standard deviation holding other parameters at their means)
     weights = {
         'Area': np.std(
             7758.0
