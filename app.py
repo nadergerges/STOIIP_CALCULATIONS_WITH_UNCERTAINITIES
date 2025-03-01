@@ -1,9 +1,10 @@
 import streamlit as st
 import numpy as np
-import matplotlib.pyplot as plt
+import pandas as pd
+import altair as alt
 
 # Streamlit app title
-st.title("STOIIP Calculator with Monte Carlo Simulation")
+st.title("STOIIP Calculator with Monte Carlo Simulation (Altair)")
 
 # Sidebar for input parameters
 st.sidebar.header("Input Parameters")
@@ -28,6 +29,7 @@ barrel_conversion = 1917134
 # Monte Carlo simulation function
 def run_monte_carlo(area_km2, area_unc, thickness, thick_unc, porosity, por_unc,
                     oil_saturation, sat_unc, fvf, fvf_unc, ntg, ntg_unc, iterations):
+    # Generate random samples
     area_samples = np.random.normal(area_km2, area_km2 * area_unc/100, iterations)
     thick_samples = np.random.normal(thickness, thickness * thick_unc/100, iterations)
     por_samples = np.random.normal(porosity, porosity * por_unc/100, iterations)
@@ -35,7 +37,7 @@ def run_monte_carlo(area_km2, area_unc, thickness, thick_unc, porosity, por_unc,
     fvf_samples = np.random.normal(fvf, fvf * fvf_unc/100, iterations)
     ntg_samples = np.random.normal(ntg, ntg * ntg_unc/100, iterations)
     
-    # Clip values
+    # Clip values so they don't go below/above physically reasonable limits
     area_samples = np.clip(area_samples, 1, None)
     thick_samples = np.clip(thick_samples, 10, None)
     por_samples = np.clip(por_samples, 0.05, 0.4)
@@ -44,70 +46,103 @@ def run_monte_carlo(area_km2, area_unc, thickness, thick_unc, porosity, por_unc,
     ntg_samples = np.clip(ntg_samples, 0.1, 1.0)
     
     # STOIIP calculation
-    stoiip_samples = (area_samples * thick_samples * por_samples * sat_samples * 
-                      ntg_samples * barrel_conversion) / fvf_samples
-    stoiip_bstb = stoiip_samples / 1_000_000_000
+    stoiip_samples = (area_samples * thick_samples * por_samples * 
+                      sat_samples * ntg_samples * barrel_conversion) / fvf_samples
+    stoiip_bstb = stoiip_samples / 1_000_000_000  # Convert to billions of STB
     
-    # Calculate weights (relative contribution based on standard deviation)
+    # Calculate weights (relative contribution based on standard deviation approach)
     weights = {
-        'Area': np.std(area_samples * thick_samples.mean() * por_samples.mean() * sat_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()),
-        'Thickness': np.std(thick_samples * area_samples.mean() * por_samples.mean() * sat_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()),
-        'Porosity': np.std(por_samples * area_samples.mean() * thick_samples.mean() * sat_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()),
-        'Oil Sat': np.std(sat_samples * area_samples.mean() * thick_samples.mean() * por_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()),
-        'NTG': np.std(ntg_samples * area_samples.mean() * thick_samples.mean() * por_samples.mean() * sat_samples.mean() * barrel_conversion / fvf_samples.mean()),
-        'FVF': np.std(fvf_samples * area_samples.mean() * thick_samples.mean() * por_samples.mean() * sat_samples.mean() * ntg_samples.mean() * barrel_conversion / stoiip_samples)
+        'Area': np.std(area_samples * thick_samples.mean() * por_samples.mean() * 
+                       sat_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()),
+        'Thickness': np.std(thick_samples * area_samples.mean() * por_samples.mean() * 
+                            sat_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()),
+        'Porosity': np.std(por_samples * area_samples.mean() * thick_samples.mean() * 
+                           sat_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()),
+        'Oil Sat': np.std(sat_samples * area_samples.mean() * thick_samples.mean() * 
+                          por_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()),
+        'NTG': np.std(ntg_samples * area_samples.mean() * thick_samples.mean() * 
+                      por_samples.mean() * sat_samples.mean() * barrel_conversion / fvf_samples.mean()),
+        'FVF': np.std(fvf_samples * area_samples.mean() * thick_samples.mean() * 
+                      por_samples.mean() * sat_samples.mean() * ntg_samples.mean() * barrel_conversion / stoiip_samples)
     }
     total_weight = sum(weights.values())
     normalized_weights = {k: v / total_weight for k, v in weights.items()}
     
     return stoiip_bstb, normalized_weights
 
-# Run simulation
-stoiip_samples_bstb, weights = run_monte_carlo(area_km2, area_unc, thickness, thick_unc,
-                                              porosity, por_unc, oil_saturation, sat_unc,
-                                              fvf, fvf_unc, ntg, ntg_unc, iterations)
+# Run the Monte Carlo simulation
+stoiip_samples_bstb, weights = run_monte_carlo(
+    area_km2, area_unc, thickness, thick_unc,
+    porosity, por_unc, oil_saturation, sat_unc,
+    fvf, fvf_unc, ntg, ntg_unc, iterations
+)
+
+# Calculate P10, P50, and P90
 p10 = np.percentile(stoiip_samples_bstb, 10)
 p50 = np.percentile(stoiip_samples_bstb, 50)
 p90 = np.percentile(stoiip_samples_bstb, 90)
 
-# Create three plots
-fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
+# --- 1. Bar Chart of P10, P50, and P90 ---
+cases_df = pd.DataFrame({
+    'Case': ['P10 (Low)', 'P50 (Base)', 'P90 (High)'],
+    'Volume (BSTB)': [p10, p50, p90]
+})
 
-# STOIIP Cases Bar Chart
-bars = ax1.bar(['P10 (Low)', 'P50 (Base)', 'P90 (High)'], [p10, p50, p90], color=['red', 'blue', 'green'])
-ax1.set_ylabel('Volume (BSTB)')
-ax1.set_title(f'STOIIP Cases ({iterations} iterations)')
-ax1.grid(True, alpha=0.3)
-for bar in bars:
-    height = bar.get_height()
-    ax1.text(bar.get_x() + bar.get_width()/2., height,
-             f'{height:,.3f}', ha='center', va='bottom', fontsize=10)
+cases_chart = (
+    alt.Chart(cases_df)
+    .mark_bar()
+    .encode(
+        x=alt.X('Case:N', title='', sort=None),
+        y=alt.Y('Volume (BSTB):Q', title='Volume (BSTB')),
+        tooltip=['Case:N', 'Volume (BSTB):Q']
+    )
+    .properties(title=f'STOIIP Cases ({iterations} iterations)')
+)
 
-# STOIIP Distribution Histogram
-ax2.hist(stoiip_samples_bstb, bins=50, color='gray', alpha=0.7, density=True)
-ax2.set_xlabel('Volume (BSTB)')
-ax2.set_ylabel('Probability Density')
-ax2.set_title('STOIIP Distribution')
-ax2.axvline(p10, color='red', linestyle='--', label=f'P10: {p10:.3f}')
-ax2.axvline(p50, color='blue', linestyle='--', label=f'P50: {p50:.3f}')
-ax2.axvline(p90, color='green', linestyle='--', label=f'P90: {p90:.3f}')
-ax2.legend()
-ax2.grid(True, alpha=0.3)
+# --- 2. Histogram of the STOIIP Distribution with lines for P10, P50, P90 ---
+dist_df = pd.DataFrame({'STOIIP (BSTB)': stoiip_samples_bstb})
 
-# Variable Weights Bar Chart
-variables = list(weights.keys())
-weight_values = list(weights.values())
-bars = ax3.bar(variables, weight_values, color='purple')
-ax3.set_ylabel('Relative Weight')
-ax3.set_title('Variable Weights in STOIIP')
-ax3.set_ylim(0, max(weight_values) * 1.2 if max(weight_values) > 0 else 1)
-ax3.grid(True, alpha=0.3)
-for bar in bars:
-    height = bar.get_height()
-    ax3.text(bar.get_x() + bar.get_width()/2., height,
-             f'{height:.2f}', ha='center', va='bottom', fontsize=10)
-plt.setp(ax3.get_xticklabels(), rotation=45, ha='right')
+# Base histogram
+hist = (
+    alt.Chart(dist_df)
+    .mark_bar(opacity=0.7)
+    .encode(
+        alt.X('STOIIP (BSTB):Q', bin=alt.Bin(maxbins=50), title='STOIIP (BSTB)'),
+        alt.Y('count()', title='Count')
+    )
+    .properties(title='STOIIP Distribution')
+)
 
-# Adjust layout and display
-plt.tight_layout()
-st.pyplot(fig)
+# Vertical lines for P10, P50, P90 (layer on top of the histogram)
+rule_p10 = alt.Chart(pd.DataFrame({'value': [p10]})).mark_rule(color='red').encode(x='value:Q')
+rule_p50 = alt.Chart(pd.DataFrame({'value': [p50]})).mark_rule(color='blue').encode(x='value:Q')
+rule_p90 = alt.Chart(pd.DataFrame({'value': [p90]})).mark_rule(color='green').encode(x='value:Q')
+
+dist_chart = alt.layer(hist, rule_p10, rule_p50, rule_p90).interactive()
+
+# --- 3. Bar Chart of variable weights ---
+weights_df = pd.DataFrame({
+    'Variable': list(weights.keys()),
+    'Weight': list(weights.values())
+})
+
+weights_chart = (
+    alt.Chart(weights_df)
+    .mark_bar()
+    .encode(
+        x=alt.X('Variable:N', sort=None, title='Variable'),
+        y=alt.Y('Weight:Q', title='Relative Weight'),
+        tooltip=['Variable:N', 'Weight:Q']
+    )
+    .properties(title='Variable Weights in STOIIP')
+)
+
+# Display charts in Streamlit
+st.altair_chart(cases_chart, use_container_width=True)
+st.altair_chart(dist_chart, use_container_width=True)
+st.altair_chart(weights_chart, use_container_width=True)
+
+# Display the numeric values for P10, P50, P90
+st.write(f"**P10 (Low):** {p10:,.3f} BSTB")
+st.write(f"**P50 (Base):** {p50:,.3f} BSTB")
+st.write(f"**P90 (High):** {p90:,.3f} BSTB")
