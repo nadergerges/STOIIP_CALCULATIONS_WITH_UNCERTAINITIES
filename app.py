@@ -26,7 +26,6 @@ iterations = st.sidebar.number_input("Iterations", min_value=100, max_value=5000
 # Conversion factor: 1,917,134 barrels per km²-ft
 barrel_conversion = 1917134
 
-# Monte Carlo simulation function
 def run_monte_carlo(area_km2, area_unc, thickness, thick_unc, porosity, por_unc,
                     oil_saturation, sat_unc, fvf, fvf_unc, ntg, ntg_unc, iterations):
     # Generate random samples
@@ -95,24 +94,46 @@ p10 = np.percentile(stoiip_samples_bstb, 10)
 p50 = np.percentile(stoiip_samples_bstb, 50)
 p90 = np.percentile(stoiip_samples_bstb, 90)
 
-# --- 1. Bar Chart of P10, P50, and P90 ---
+# 1) Bar Chart of P10 (blue), P50 (green), P90 (red) + labels
 cases_df = pd.DataFrame({
     'Case': ['P10 (Low)', 'P50 (Base)', 'P90 (High)'],
     'Volume (BSTB)': [p10, p50, p90]
 })
 
-cases_chart = (
+# Define the color scale for each case
+color_scale = alt.Scale(
+    domain=['P10 (Low)', 'P50 (Base)', 'P90 (High)'],
+    range=['blue', 'green', 'red']
+)
+
+# Base bar chart
+cases_chart_bars = (
     alt.Chart(cases_df)
     .mark_bar()
     .encode(
         x=alt.X('Case:N', title='', sort=None),
         y=alt.Y('Volume (BSTB):Q', title='Volume (BSTB)'),
+        color=alt.Color('Case:N', scale=color_scale, legend=None),
         tooltip=['Case:N', 'Volume (BSTB):Q']
     )
     .properties(title=f'STOIIP Cases ({iterations} iterations)')
 )
 
-# --- 2. Histogram of the STOIIP Distribution with lines for P10, P50, P90 ---
+# Add text labels on top of each bar
+cases_chart_text = (
+    alt.Chart(cases_df)
+    .mark_text(dy=-5)
+    .encode(
+        x=alt.X('Case:N', sort=None),
+        y=alt.Y('Volume (BSTB):Q'),
+        text=alt.Text('Volume (BSTB):Q', format=",.3f"),
+        color=alt.value('black')  # text color
+    )
+)
+
+cases_chart = cases_chart_bars + cases_chart_text
+
+# 2) Histogram of STOIIP distribution with vertical rules at P10, P50, P90
 dist_df = pd.DataFrame({'STOIIP (BSTB)': stoiip_samples_bstb})
 
 hist = (
@@ -125,13 +146,13 @@ hist = (
     .properties(title='STOIIP Distribution')
 )
 
-rule_p10 = alt.Chart(pd.DataFrame({'value': [p10]})).mark_rule(color='red').encode(x='value:Q')
-rule_p50 = alt.Chart(pd.DataFrame({'value': [p50]})).mark_rule(color='blue').encode(x='value:Q')
-rule_p90 = alt.Chart(pd.DataFrame({'value': [p90]})).mark_rule(color='green').encode(x='value:Q')
+rule_p10 = alt.Chart(pd.DataFrame({'value': [p10]})).mark_rule(color='blue').encode(x='value:Q')
+rule_p50 = alt.Chart(pd.DataFrame({'value': [p50]})).mark_rule(color='green').encode(x='value:Q')
+rule_p90 = alt.Chart(pd.DataFrame({'value': [p90]})).mark_rule(color='red').encode(x='value:Q')
 
 dist_chart = alt.layer(hist, rule_p10, rule_p50, rule_p90).interactive()
 
-# --- 3. Bar Chart of variable weights ---
+# 3) Bar Chart of variable weights
 weights_df = pd.DataFrame({
     'Variable': list(weights.keys()),
     'Weight': list(weights.values())
@@ -148,12 +169,12 @@ weights_chart = (
     .properties(title='Variable Weights in STOIIP')
 )
 
-# Display charts in Streamlit
+# Display all charts
 st.altair_chart(cases_chart, use_container_width=True)
 st.altair_chart(dist_chart, use_container_width=True)
 st.altair_chart(weights_chart, use_container_width=True)
 
-# Display P10, P50, P90 numeric values
+# Display numeric values
 st.write(f"**P10 (Low):** {p10:,.3f} BSTB")
 st.write(f"**P50 (Base):** {p50:,.3f} BSTB")
 st.write(f"**P90 (High):** {p90:,.3f} BSTB")
