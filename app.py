@@ -8,7 +8,7 @@ st.title("STOIIP Calculator with Monte Carlo Uncertainity Simulation")
 
 # Display the STOIIP equation below the main header
 st.latex(r"""
-\text{STOIIP ((STB)} = (7758 \times A(\text{acres}) \times h(\text{ft}) \times \phi \times S_o \times \frac{\text{NTG}})
+\text{STOIIP ((STB)} = (7758 \times A(\text{acres}) \times h(\text{ft}) \times \phi \times S_o \times NTG)/(FVF))
 """)
 
 # Sidebar for input parameters
