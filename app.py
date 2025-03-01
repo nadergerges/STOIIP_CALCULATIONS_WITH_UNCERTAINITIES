@@ -4,78 +4,120 @@ import pandas as pd
 import altair as alt
 
 # Streamlit app title
-st.title("STOIIP Calculator with Monte Carlo Simulation (Altair)")
+st.title("STOIIP Calculator (Acres) with Monte Carlo Simulation (Altair)")
 
 # Sidebar for input parameters
 st.sidebar.header("Input Parameters")
 
-area_km2 = st.sidebar.slider("Area (km²)", 1.0, 1000.0, 100.0, step=1.0)
+area_acres = st.sidebar.slider("Area (acres)", 1.0, 1_000_000.0, 10000.0, step=1000.0)
 area_unc = st.sidebar.slider("Area Uncertainty (±%)", 0.0, 50.0, 10.0, step=1.0)
-thickness = st.sidebar.slider("Thickness (ft)", 10.0, 500.0, 100.0, step=10.0)
+thickness = st.sidebar.slider("Thickness (ft)", 1.0, 500.0, 100.0, step=1.0)
 thick_unc = st.sidebar.slider("Thickness Uncertainty (±%)", 0.0, 50.0, 15.0, step=1.0)
 porosity = st.sidebar.slider("Porosity (fraction)", 0.05, 0.4, 0.2, step=0.01)
 por_unc = st.sidebar.slider("Porosity Uncertainty (±%)", 0.0, 50.0, 20.0, step=1.0)
 oil_saturation = st.sidebar.slider("Oil Saturation (fraction)", 0.2, 0.95, 0.7, step=0.01)
 sat_unc = st.sidebar.slider("Oil Saturation Uncertainty (±%)", 0.0, 50.0, 10.0, step=1.0)
-fvf = st.sidebar.slider("Formation Volume Factor", 1.0, 2.0, 1.2, step=0.05)
+fvf = st.sidebar.slider("Formation Volume Factor (Bo)", 1.0, 2.0, 1.2, step=0.05)
 fvf_unc = st.sidebar.slider("FVF Uncertainty (±%)", 0.0, 50.0, 5.0, step=1.0)
-ntg = st.sidebar.slider("Net to Gross (fraction)", 0.1, 1.0, 0.8, step=0.01)
+ntg = st.sidebar.slider("Net-to-Gross (fraction)", 0.1, 1.0, 0.8, step=0.01)
 ntg_unc = st.sidebar.slider("NTG Uncertainty (±%)", 0.0, 50.0, 10.0, step=1.0)
 iterations = st.sidebar.number_input("Iterations", min_value=100, max_value=5000, value=1000, step=100)
 
-# Conversion factor: 1,917,134 barrels per km²-ft
-barrel_conversion = 1917134
+# STOIIP factor in acres and feet:
+# STOIIP (STB) = 7758 * area(acres) * thickness(ft) * porosity * So * net-to-gross / Bo
 
-def run_monte_carlo(area_km2, area_unc, thickness, thick_unc, porosity, por_unc,
+def run_monte_carlo(area_acres, area_unc, thickness, thick_unc, porosity, por_unc,
                     oil_saturation, sat_unc, fvf, fvf_unc, ntg, ntg_unc, iterations):
-    # Generate random samples
-    area_samples = np.random.normal(area_km2, area_km2 * area_unc/100, iterations)
+    # Generate random samples for each parameter
+    area_samples = np.random.normal(area_acres, area_acres * area_unc/100, iterations)
     thick_samples = np.random.normal(thickness, thickness * thick_unc/100, iterations)
     por_samples = np.random.normal(porosity, porosity * por_unc/100, iterations)
     sat_samples = np.random.normal(oil_saturation, oil_saturation * sat_unc/100, iterations)
     fvf_samples = np.random.normal(fvf, fvf * fvf_unc/100, iterations)
     ntg_samples = np.random.normal(ntg, ntg * ntg_unc/100, iterations)
     
-    # Clip values to reasonable limits
-    area_samples = np.clip(area_samples, 1, None)
-    thick_samples = np.clip(thick_samples, 10, None)
+    # Clip values to reasonable physical limits
+    area_samples = np.clip(area_samples, 1.0, None)
+    thick_samples = np.clip(thick_samples, 1.0, None)
     por_samples = np.clip(por_samples, 0.05, 0.4)
     sat_samples = np.clip(sat_samples, 0.2, 0.95)
     fvf_samples = np.clip(fvf_samples, 1.0, 2.0)
     ntg_samples = np.clip(ntg_samples, 0.1, 1.0)
     
-    # STOIIP calculation
-    stoiip_samples = (area_samples * thick_samples * por_samples *
-                      sat_samples * ntg_samples * barrel_conversion) / fvf_samples
-    stoiip_bstb = stoiip_samples / 1_000_000_000  # Convert to billions of STB
+    # Calculate STOIIP in STB
+    stoiip_samples = (
+        7758.0
+        * area_samples
+        * thick_samples
+        * por_samples
+        * sat_samples
+        * ntg_samples
+        / fvf_samples
+    )
     
-    # Calculate weights (relative contribution based on standard deviation approach)
+    # Convert to billions of STB (BSTB)
+    stoiip_bstb = stoiip_samples / 1_000_000_000
+    
+    # Calculate "weights" for variable importance (std dev of partial changes)
+    # We'll hold everything else at its mean except the variable in question:
+    # For example, for Area: 7758 * area_samples * mean(thick) * mean(por) * mean(So) * mean(ntg) / mean(fvf)
+    # Then compute std of that expression. Similarly for each parameter.
+    # FVF is special because it appears in the denominator.
     weights = {
         'Area': np.std(
-            area_samples * thick_samples.mean() * por_samples.mean() *
-            sat_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()
+            7758.0
+            * area_samples
+            * thick_samples.mean()
+            * por_samples.mean()
+            * sat_samples.mean()
+            * ntg_samples.mean()
+            / fvf_samples.mean()
         ),
         'Thickness': np.std(
-            thick_samples * area_samples.mean() * por_samples.mean() *
-            sat_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()
+            7758.0
+            * area_samples.mean()
+            * thick_samples
+            * por_samples.mean()
+            * sat_samples.mean()
+            * ntg_samples.mean()
+            / fvf_samples.mean()
         ),
         'Porosity': np.std(
-            por_samples * area_samples.mean() * thick_samples.mean() *
-            sat_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()
+            7758.0
+            * area_samples.mean()
+            * thick_samples.mean()
+            * por_samples
+            * sat_samples.mean()
+            * ntg_samples.mean()
+            / fvf_samples.mean()
         ),
         'Oil Sat': np.std(
-            sat_samples * area_samples.mean() * thick_samples.mean() *
-            por_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()
+            7758.0
+            * area_samples.mean()
+            * thick_samples.mean()
+            * por_samples.mean()
+            * sat_samples
+            * ntg_samples.mean()
+            / fvf_samples.mean()
         ),
         'NTG': np.std(
-            ntg_samples * area_samples.mean() * thick_samples.mean() *
-            por_samples.mean() * sat_samples.mean() * barrel_conversion / fvf_samples.mean()
+            7758.0
+            * area_samples.mean()
+            * thick_samples.mean()
+            * por_samples.mean()
+            * sat_samples.mean()
+            * ntg_samples
+            / fvf_samples.mean()
         ),
         'FVF': np.std(
-            fvf_samples * area_samples.mean() * thick_samples.mean() *
-            por_samples.mean() * sat_samples.mean() * ntg_samples.mean() *
-            barrel_conversion / stoiip_samples
-        )
+            7758.0
+            * area_samples.mean()
+            * thick_samples.mean()
+            * por_samples.mean()
+            * sat_samples.mean()
+            * ntg_samples.mean()
+            / fvf_samples
+        ),
     }
     total_weight = sum(weights.values())
     normalized_weights = {k: v / total_weight for k, v in weights.items()}
@@ -84,12 +126,12 @@ def run_monte_carlo(area_km2, area_unc, thickness, thick_unc, porosity, por_unc,
 
 # Run the Monte Carlo simulation
 stoiip_samples_bstb, weights = run_monte_carlo(
-    area_km2, area_unc, thickness, thick_unc,
+    area_acres, area_unc, thickness, thick_unc,
     porosity, por_unc, oil_saturation, sat_unc,
     fvf, fvf_unc, ntg, ntg_unc, iterations
 )
 
-# Calculate P10, P50, and P90
+# Calculate P10, P50, P90
 p10 = np.percentile(stoiip_samples_bstb, 10)
 p50 = np.percentile(stoiip_samples_bstb, 50)
 p90 = np.percentile(stoiip_samples_bstb, 90)
@@ -133,7 +175,7 @@ cases_chart_text = (
 
 cases_chart = cases_chart_bars + cases_chart_text
 
-# 2) Histogram of STOIIP distribution with vertical rules at P10, P50, P90
+# 2) Histogram of STOIIP distribution with vertical rules at P10 (blue), P50 (green), P90 (red)
 dist_df = pd.DataFrame({'STOIIP (BSTB)': stoiip_samples_bstb})
 
 hist = (
