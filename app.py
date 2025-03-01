@@ -37,7 +37,7 @@ def run_monte_carlo(area_km2, area_unc, thickness, thick_unc, porosity, por_unc,
     fvf_samples = np.random.normal(fvf, fvf * fvf_unc/100, iterations)
     ntg_samples = np.random.normal(ntg, ntg * ntg_unc/100, iterations)
     
-    # Clip values so they don't go below/above physically reasonable limits
+    # Clip values to reasonable limits
     area_samples = np.clip(area_samples, 1, None)
     thick_samples = np.clip(thick_samples, 10, None)
     por_samples = np.clip(por_samples, 0.05, 0.4)
@@ -46,24 +46,37 @@ def run_monte_carlo(area_km2, area_unc, thickness, thick_unc, porosity, por_unc,
     ntg_samples = np.clip(ntg_samples, 0.1, 1.0)
     
     # STOIIP calculation
-    stoiip_samples = (area_samples * thick_samples * por_samples * 
+    stoiip_samples = (area_samples * thick_samples * por_samples *
                       sat_samples * ntg_samples * barrel_conversion) / fvf_samples
     stoiip_bstb = stoiip_samples / 1_000_000_000  # Convert to billions of STB
     
     # Calculate weights (relative contribution based on standard deviation approach)
     weights = {
-        'Area': np.std(area_samples * thick_samples.mean() * por_samples.mean() * 
-                       sat_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()),
-        'Thickness': np.std(thick_samples * area_samples.mean() * por_samples.mean() * 
-                            sat_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()),
-        'Porosity': np.std(por_samples * area_samples.mean() * thick_samples.mean() * 
-                           sat_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()),
-        'Oil Sat': np.std(sat_samples * area_samples.mean() * thick_samples.mean() * 
-                          por_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()),
-        'NTG': np.std(ntg_samples * area_samples.mean() * thick_samples.mean() * 
-                      por_samples.mean() * sat_samples.mean() * barrel_conversion / fvf_samples.mean()),
-        'FVF': np.std(fvf_samples * area_samples.mean() * thick_samples.mean() * 
-                      por_samples.mean() * sat_samples.mean() * ntg_samples.mean() * barrel_conversion / stoiip_samples)
+        'Area': np.std(
+            area_samples * thick_samples.mean() * por_samples.mean() *
+            sat_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()
+        ),
+        'Thickness': np.std(
+            thick_samples * area_samples.mean() * por_samples.mean() *
+            sat_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()
+        ),
+        'Porosity': np.std(
+            por_samples * area_samples.mean() * thick_samples.mean() *
+            sat_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()
+        ),
+        'Oil Sat': np.std(
+            sat_samples * area_samples.mean() * thick_samples.mean() *
+            por_samples.mean() * ntg_samples.mean() * barrel_conversion / fvf_samples.mean()
+        ),
+        'NTG': np.std(
+            ntg_samples * area_samples.mean() * thick_samples.mean() *
+            por_samples.mean() * sat_samples.mean() * barrel_conversion / fvf_samples.mean()
+        ),
+        'FVF': np.std(
+            fvf_samples * area_samples.mean() * thick_samples.mean() *
+            por_samples.mean() * sat_samples.mean() * ntg_samples.mean() *
+            barrel_conversion / stoiip_samples
+        )
     }
     total_weight = sum(weights.values())
     normalized_weights = {k: v / total_weight for k, v in weights.items()}
@@ -93,7 +106,7 @@ cases_chart = (
     .mark_bar()
     .encode(
         x=alt.X('Case:N', title='', sort=None),
-        y=alt.Y('Volume (BSTB):Q', title='Volume (BSTB')),
+        y=alt.Y('Volume (BSTB):Q', title='Volume (BSTB)'),
         tooltip=['Case:N', 'Volume (BSTB):Q']
     )
     .properties(title=f'STOIIP Cases ({iterations} iterations)')
@@ -102,7 +115,6 @@ cases_chart = (
 # --- 2. Histogram of the STOIIP Distribution with lines for P10, P50, P90 ---
 dist_df = pd.DataFrame({'STOIIP (BSTB)': stoiip_samples_bstb})
 
-# Base histogram
 hist = (
     alt.Chart(dist_df)
     .mark_bar(opacity=0.7)
@@ -113,7 +125,6 @@ hist = (
     .properties(title='STOIIP Distribution')
 )
 
-# Vertical lines for P10, P50, P90 (layer on top of the histogram)
 rule_p10 = alt.Chart(pd.DataFrame({'value': [p10]})).mark_rule(color='red').encode(x='value:Q')
 rule_p50 = alt.Chart(pd.DataFrame({'value': [p50]})).mark_rule(color='blue').encode(x='value:Q')
 rule_p90 = alt.Chart(pd.DataFrame({'value': [p90]})).mark_rule(color='green').encode(x='value:Q')
@@ -142,7 +153,7 @@ st.altair_chart(cases_chart, use_container_width=True)
 st.altair_chart(dist_chart, use_container_width=True)
 st.altair_chart(weights_chart, use_container_width=True)
 
-# Display the numeric values for P10, P50, P90
+# Display P10, P50, P90 numeric values
 st.write(f"**P10 (Low):** {p10:,.3f} BSTB")
 st.write(f"**P50 (Base):** {p50:,.3f} BSTB")
 st.write(f"**P90 (High):** {p90:,.3f} BSTB")
