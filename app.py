@@ -2,13 +2,15 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import altair as alt
+import plotly.graph_objects as go
+import math
 
 # Streamlit app title
-st.title("STOIIP Calculator with Monte Carlo Uncertainity Simulation")
+st.title("STOIIP Calculator (Acres) with Monte Carlo Simulation (Altair)")
 
 # Display the STOIIP equation below the main header
 st.latex(r"""
-\text{STOIIP (STB)} = (7758 \times A(\text{acres}) \times h(\text{ft}) \times \phi \times S_o \times NTG)/FVF)
+\text{STOIIP (STB)} = 7758 \times A(\text{acres}) \times h(\text{ft}) \times \phi \times S_o \times \frac{\text{NTG}}{B_o}
 """)
 
 # Sidebar for input parameters
@@ -28,6 +30,9 @@ ntg = st.sidebar.slider("Net-to-Gross (fraction)", 0.1, 1.0, 0.8, step=0.01)
 ntg_unc = st.sidebar.slider("NTG Uncertainty (±%)", 0.0, 50.0, 10.0, step=1.0)
 iterations = st.sidebar.number_input("Iterations", min_value=100, max_value=5000, value=1000, step=100)
 
+########################################################
+# Monte Carlo simulation function
+########################################################
 def run_monte_carlo(area_acres, area_unc, thickness, thick_unc, porosity, por_unc,
                     oil_saturation, sat_unc, fvf, fvf_unc, ntg, ntg_unc, iterations):
     # Generate random samples for each parameter
@@ -122,17 +127,23 @@ def run_monte_carlo(area_acres, area_unc, thickness, thick_unc, porosity, por_un
     
     return stoiip_bstb, normalized_weights
 
+########################################################
 # Run the Monte Carlo simulation
+########################################################
 stoiip_samples_bstb, weights = run_monte_carlo(
     area_acres, area_unc, thickness, thick_unc,
     porosity, por_unc, oil_saturation, sat_unc,
     fvf, fvf_unc, ntg, ntg_unc, iterations
 )
 
-# Calculate P10, P50, P90
+# Calculate P10, P50, and P90
 p10 = np.percentile(stoiip_samples_bstb, 10)
 p50 = np.percentile(stoiip_samples_bstb, 50)
 p90 = np.percentile(stoiip_samples_bstb, 90)
+
+########################################################
+# Altair Charts
+########################################################
 
 # 1) Bar Chart of P10 (blue), P50 (green), P90 (red) + labels
 cases_df = pd.DataFrame({
@@ -140,13 +151,11 @@ cases_df = pd.DataFrame({
     'Volume (BSTB)': [p10, p50, p90]
 })
 
-# Define the color scale for each case
 color_scale = alt.Scale(
     domain=['P10 (Low)', 'P50 (Base)', 'P90 (High)'],
     range=['blue', 'green', 'red']
 )
 
-# Base bar chart
 cases_chart_bars = (
     alt.Chart(cases_df)
     .mark_bar()
@@ -159,7 +168,6 @@ cases_chart_bars = (
     .properties(title=f'STOIIP Cases ({iterations} iterations)')
 )
 
-# Add text labels on top of each bar
 cases_chart_text = (
     alt.Chart(cases_df)
     .mark_text(dy=-5)
@@ -167,7 +175,7 @@ cases_chart_text = (
         x=alt.X('Case:N', sort=None),
         y=alt.Y('Volume (BSTB):Q'),
         text=alt.Text('Volume (BSTB):Q', format=",.3f"),
-        color=alt.value('black')  # text color
+        color=alt.value('black')
     )
 )
 
@@ -209,7 +217,9 @@ weights_chart = (
     .properties(title='Variable Weights in STOIIP')
 )
 
-# Display all charts
+########################################################
+# Display Altair Charts
+########################################################
 st.altair_chart(cases_chart, use_container_width=True)
 st.altair_chart(dist_chart, use_container_width=True)
 st.altair_chart(weights_chart, use_container_width=True)
@@ -218,3 +228,131 @@ st.altair_chart(weights_chart, use_container_width=True)
 st.write(f"**P10 (Low):** {p10:,.3f} BSTB")
 st.write(f"**P50 (Base):** {p50:,.3f} BSTB")
 st.write(f"**P90 (High):** {p90:,.3f} BSTB")
+
+########################################################
+# 3D Visualization of the reservoir volume
+########################################################
+st.header("3D Reservoir Volume Visualization")
+
+# Convert area (acres) to square meters
+area_m2 = area_acres * 4046.8564224  # 1 acre ~ 4046.8564224 m^2
+# Convert thickness (ft) to meters
+thickness_m = thickness * 0.3048
+
+# We define cubic cells of 200 m in the X and Y direction.
+# We'll assume a square plan view for simplicity.
+# Nx, Ny = number of cells in X, Y. We take sqrt(area_m2 / (200*200)) for each dimension.
+cell_size_xy = 200.0
+cell_size_z = 200.0
+
+Nx = int(math.sqrt(area_m2 / (cell_size_xy**2)))
+if Nx < 1:
+    Nx = 1
+Ny = Nx  # keep it square for demonstration
+
+# For thickness, define Nz such that Nz * cell_size_z ~ thickness_m
+Nz = int(thickness_m / cell_size_z)
+if Nz < 1:
+    Nz = 1
+
+Lx = Nx * cell_size_xy
+Ly = Ny * cell_size_xy
+Lz = Nz * cell_size_z
+
+st.write(f"**Number of cells**: Nx={Nx}, Ny={Ny}, Nz={Nz}")
+st.write(f"**Model dimensions** (approx): {Lx:,.1f} m × {Ly:,.1f} m × {Lz:,.1f} m")
+
+def build_3d_wireframe(Nx, Ny, Nz, dx, dy, dz):
+    """
+    Build a list of Plotly Scatter3d objects representing the wireframe
+    of a 3D grid with Nx, Ny, Nz cells in X, Y, Z directions.
+    Each cell in X dimension has length dx,
+    in Y dimension has length dy,
+    in Z dimension has length dz.
+    """
+    lines = []
+    
+    # We'll define the corners from (0,0,0) to (Nx*dx, Ny*dy, Nz*dz).
+    # 1) Lines in X-direction (for each Y, Z)
+    for j in range(Ny+1):
+        for k in range(Nz+1):
+            x0 = 0
+            y0 = j * dy
+            z0 = k * dz
+            x1 = Nx * dx
+            y1 = j * dy
+            z1 = k * dz
+            lines.append(
+                go.Scatter3d(
+                    x=[x0, x1],
+                    y=[y0, y1],
+                    z=[z0, z1],
+                    mode='lines',
+                    line=dict(color='black', width=1),
+                    showlegend=False
+                )
+            )
+    
+    # 2) Lines in Y-direction (for each X, Z)
+    for i in range(Nx+1):
+        for k in range(Nz+1):
+            x0 = i * dx
+            y0 = 0
+            z0 = k * dz
+            x1 = i * dx
+            y1 = Ny * dy
+            z1 = k * dz
+            lines.append(
+                go.Scatter3d(
+                    x=[x0, x1],
+                    y=[y0, y1],
+                    z=[z0, z1],
+                    mode='lines',
+                    line=dict(color='black', width=1),
+                    showlegend=False
+                )
+            )
+    
+    # 3) Lines in Z-direction (for each X, Y)
+    for i in range(Nx+1):
+        for j in range(Ny+1):
+            x0 = i * dx
+            y0 = j * dy
+            z0 = 0
+            x1 = i * dx
+            y1 = j * dy
+            z1 = Nz * dz
+            lines.append(
+                go.Scatter3d(
+                    x=[x0, x1],
+                    y=[y0, y1],
+                    z=[z0, z1],
+                    mode='lines',
+                    line=dict(color='black', width=1),
+                    showlegend=False
+                )
+            )
+    
+    return lines
+
+# Build the wireframe lines
+wireframe_lines = build_3d_wireframe(Nx, Ny, Nz, cell_size_xy, cell_size_xy, cell_size_z)
+
+# Create a 3D figure
+fig = go.Figure(data=wireframe_lines)
+
+# Adjust the layout for better viewing
+fig.update_layout(
+    scene=dict(
+        xaxis_title='X (m)',
+        yaxis_title='Y (m)',
+        zaxis_title='Z (m)',
+        aspectmode='manual',
+        aspectratio=dict(x=1, y=1, z=0.5)  # tweak aspect ratio if needed
+    ),
+    margin=dict(l=10, r=10, b=10, t=30),
+    showlegend=False
+)
+
+# Display Plotly 3D chart in Streamlit
+st.plotly_chart(fig, use_container_width=True)
